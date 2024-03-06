@@ -20,28 +20,45 @@ urls = [
 
 log.basicConfig(level=log.INFO, format="%(asctime)s %(levelname)s [%(processName)s:%(threadName)s] - %(message)s")
 
-def check_url(url):
-    try:
-        result = http.get(url, timeout=2)
-        if result.ok:
-            log.info(f"Result of of checking url={url} is ok")
-        else:
-            log.warning(f"Result of of checking url={url} is failed")
-        return result.ok
-    except Exception as error:
-        log.error(f"Error of checking url={url}: {error}")
-        return False
+class UrlCheckingTask:
 
-def check_urls(urls, queue):
-    result = {}
-    for url in urls:
-        result[url] = check_url(url)        
-    queue.put(result)
+    def __init__(self, urls):
+        self.urls = urls        
+        self.result = Queue()
+        self.process = Process(target = self.check_urls)
+
+    def start(self):
+        self.process.start()
+    
+    def close(self):
+        self.process.join()
+    
+    def get(self):
+        return self.result.get()
+    
+    def check_urls(self):
+        result = {}
+        for url in self.urls:
+            result[url] = self.__check_url(url)        
+        self.result.put(result)
+
+    def __check_url(self, url):
+        try:
+            result = http.get(url, timeout=2)
+            if result.ok:
+                log.info(f"Result of of checking url={url} is ok")
+            else:
+                log.warning(f"Result of of checking url={url} is failed")
+            return result.ok
+        except Exception as error:
+            log.error(f"Error of checking url={url}: {error}")
+            return False
+
+
 
 if __name__ == "__main__":
     count_processes = 5
     tasks = []
-    results = {}
     try:
         # split all urls on chunks
         chunks = [[] for i in range(count_processes)]
@@ -51,15 +68,14 @@ if __name__ == "__main__":
         # run every chunk in sub-process
         for chunk in chunks:
             if len(chunk) > 0:
-                q = Queue()
-                p = Process(target=check_urls, args=(chunk, q))
-                tasks.append({"process": p, "result": q})
-                p.start()
+                task = UrlCheckingTask(chunk)
+                tasks.append(task)
+                task.start()
 
         # wait and agregate results
+        results = {}
         for task in tasks:
-           results = dict(results, **(task["result"].get()))
-
+           results = dict(**results, **task.get())
         # printing results
         checks_list= ""
         for url, result in results.items():
@@ -67,4 +83,4 @@ if __name__ == "__main__":
         log.info(f"Results:{checks_list}")
     finally:
         for task in tasks:
-            task["process"].join()
+            task.close()
